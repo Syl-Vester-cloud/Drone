@@ -37,7 +37,12 @@ int leftMotors[2]  = {0, 2};  // Front-left & back-left
 int rightMotors[2] = {1, 3};  // Front-right & back-ri
 const int MIN_SPEED = 1000;  // Arm/idle (no spin)
 const int MAX_SPEED = 2000;  // Full throttle
-const int DELTA = 50;  // Ramp step (tune: 25=snappy, 100=slow)
+int newFrontSpeed ;
+  int newBackSpeed ;
+  int newLeftMotors;
+  int newRightMotors;
+const int DELTA = 50;
+const int DELTA2=50; // Ramp step (tune: 25=snappy, 100=slow)
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 int ledPin=2;
@@ -62,6 +67,11 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
        
     }
 }
+
+ void speedStabilizer(){
+    
+
+ }
 void controllMotors() {
   StaticJsonDocument<200> json;
 
@@ -80,24 +90,47 @@ void controllMotors() {
   };
   
   if (command == "throttleUp") {  // Gradual all-up
-    Serial.println("Throttle Up: All =="+ DELTA);
+    Serial.println("Throttle Up All =="+ DELTA);
+
+    ///Speed stabilizer
+     if(motorSpeeds[frontMotors[0]] != motorSpeeds[frontMotors[1]]||
+   motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]]){
+    motorSpeeds[frontMotors[0]]=motorSpeeds[frontMotors[1]];
+     motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]];
+
+     for (int i = 0; i < 2; i++) {
+    
+    motorSpeeds[frontMotors[i]] += DELTA;
+    motorSpeeds[backMotors[i]]  += DELTA;
+     updateMotor(motors[frontMotors[0]], motorSpeeds[frontMotors[1]]);
+    updateMotor(motors[backMotors[0]],  motorSpeeds[backMotors[1]]);
+     Serial.printf("[%d] satbilised front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] satbilised back motors = %d\n", i, motorSpeeds[backMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+  }
+
+   }
+
     for (int i = 0; i < 4; i++) {
-     if (motorSpeeds[0] >= MAX_SPEED || motorSpeeds[1] >= MAX_SPEED ||
-        motorSpeeds[2] >= MAX_SPEED || motorSpeeds[3] >= MAX_SPEED) {
+     if (motorSpeeds[i]>= 2000) {
           for(int i=0;i<4;i++){
             motorSpeeds[i]={1950};
             updateMotor(motors[i], motorSpeeds[i]);
            speeds.add(motorSpeeds[i]);
            Serial.printf("[%d] = %d  ", i, motorSpeeds[i]);    
+             ws.textAll("Cannot Pitch Up motor... limit reached\n");
           }
-         ws.textAll("Cannot Pitch Up: motor... limit reached");
+       
         return;
         }
+    
       motorSpeeds[i] += DELTA;
       updateMotor(motors[i], motorSpeeds[i]);
       speeds.add(motorSpeeds[i]);
-       
     }
+    
+    
+    
    
       serializeJson(json, jsonString);
     ws.textAll(jsonString);
@@ -106,10 +139,26 @@ void controllMotors() {
 
 
   } else if (command == "throttleDown") {  // Gradual all-down
-    Serial.printf("Throttle Down: All =="+ DELTA);
+    Serial.printf(" %d Throttle Down All ==\n"+ DELTA);
+    if(motorSpeeds[frontMotors[0]] != motorSpeeds[frontMotors[1]]||
+   motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]]){
+    motorSpeeds[frontMotors[0]]=motorSpeeds[frontMotors[1]];
+     motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]];
+
+     for (int i = 0; i < 2; i++) {
+    
+    motorSpeeds[frontMotors[i]] -= DELTA;
+    motorSpeeds[backMotors[i]]  -= DELTA;
+     updateMotor(motors[frontMotors[0]], motorSpeeds[frontMotors[1]]);
+    updateMotor(motors[backMotors[0]],  motorSpeeds[backMotors[1]]);
+     Serial.printf("[%d] satbilised front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] satbilised back motors = %d\n", i, motorSpeeds[backMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+  }
+
+   }
     for (int i = 0; i < 4; i++) {
-      if (motorSpeeds[0] <= MIN_SPEED  || motorSpeeds[1] <= MIN_SPEED  ||
-        motorSpeeds[2] <= MIN_SPEED || motorSpeeds[3] <= MIN_SPEED) {
+      if (motorSpeeds[i]<=1000) {
            for(int i=0;i<4;i++){
             motorSpeeds[i]={1050};
             updateMotor(motors[i], motorSpeeds[i]);
@@ -118,111 +167,189 @@ void controllMotors() {
           }
            serializeJson(json, jsonString);
         ws.textAll(jsonString);
-        ws.textAll("Cannot Pitch Down: motor min limit reached");
+        ws.textAll("Cannot Pitch Down motor min limit reached\n");
+         Serial.printf("[%d] = %d  ", i, motorSpeeds[i]);  
           return;
         }
       motorSpeeds[i] -= DELTA;
       updateMotor(motors[i], motorSpeeds[i]);
       speeds.add(motorSpeeds[i]);
+      Serial.printf("[%d] speeds throttledown= %d \n ", i, motorSpeeds[i]);  
     }
     Serial.println("Motor Speeds==" +jsonString);
     ws.textAll("Throttle Down - Deceling!");
   serializeJson(json, jsonString);
   ws.textAll(jsonString);
-  } else if (command == "PitchUp") { 
-     // Nose up: Fronts +, Rears -
+  }
+  
+  ///Pitching up nose up drone moving backwards
+   else if (command == "PitchUp") { 
+     // Nose up: Fronts +, Rears s
+     int speedError;
+
+    /*We need to make sure the speed of a pair of motors is 
+    //same before making changes so we dont have un balanced movements*/
  for (int i = 0; i < 2; i++) {
   // Predict new speeds before applying
-  int newFrontSpeed = motorSpeeds[frontMotors[i]] - DELTA;
-  int newBackSpeed  = motorSpeeds[backMotors[i]]  + DELTA;
-
+ 
+  if( motorSpeeds[frontMotors[0]] != motorSpeeds[frontMotors[1]]||
+   motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]]){
+    motorSpeeds[frontMotors[0]] =motorSpeeds[frontMotors[1]];
+     motorSpeeds[backMotors[0]]= motorSpeeds[backMotors[1]];
+     updateMotor(motors[frontMotors[0]], motorSpeeds[frontMotors[1]]);
+    updateMotor(motors[backMotors[0]],  motorSpeeds[backMotors[1]]);
+   Serial.printf("[%d] satbilised front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] satbilised back motors = %d\n", i, motorSpeeds[backMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+   }
+   if(motorSpeeds[frontMotors[i]]>=2000||motorSpeeds[backMotors[i]]>=2000){
+    Serial.println("Speeds cant exceed 2000");
+    return;
+   }
+ }
+  // newFrontSpeed = motorSpeeds[frontMotors[i]] + DELTA;
+  // newBackSpeed  = motorSpeeds[backMotors[i]]  + DELTA2;
   // Check bounds for any motor in the pair
-  if (newFrontSpeed < MIN_SPEED || newBackSpeed > MAX_SPEED) {
+  /*if (newFrontSpeed < MIN_SPEED || newBackSpeed > MAX_SPEED) {
     ws.textAll("⚠️ Pitch Up Blocked: speed limit reached");
     Serial.println("Pitch Up Blocked: limit reached");
     return;  // Stop the whole function safely
-  }
-}
-
-// If safe, apply changes to both pairs
+  }*/
+ // If safe, apply changes to both pairs
    for (int i = 0; i < 2; i++) {
-  motorSpeeds[frontMotors[i]] -= DELTA;
+    
+  motorSpeeds[frontMotors[i]] += DELTA+10;
   motorSpeeds[backMotors[i]]  += DELTA;
   updateMotor(motors[frontMotors[i]], motorSpeeds[frontMotors[i]]);
   updateMotor(motors[backMotors[i]],  motorSpeeds[backMotors[i]]);
   speeds.add(motorSpeeds[frontMotors[i]]);
   speeds.add(motorSpeeds[backMotors[i]]);
- Serial.printf("[%d] = %d :: %d\n", i, motorSpeeds[frontMotors[i]], motorSpeeds[backMotors[i]]);
+ Serial.printf("[%d] front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] back motors = %d\n", i, motorSpeeds[backMotors[i]]);
 }
-
+serializeJson(json, jsonString);
   ws.textAll(jsonString);
     ws.textAll("Pitch Up - Nose lifting!");
      Serial.println("Motor Speeds==" +jsonString);
+
   
-  } else if (command == "PitchDown") {  // Nose down: Fronts -, Rears +
+  } 
+  //Pitching down nose down drone moving forward..
+  else if (command == "PitchDown") {  // Nose down: Fronts -, Rears +
+
+  /*We need to make sure the speed of a pair of motors is 
+    //same before making changes so we dont have un balanced movements*/
    for (int i = 0; i < 2; i++) {
   // Predict new speeds before applying
-  int newFrontSpeed = motorSpeeds[frontMotors[i]] + DELTA;
-  int newBackSpeed  = motorSpeeds[backMotors[i]]  - DELTA;
-
-  // Check bounds for any motor in the pair
-  if (newFrontSpeed < MIN_SPEED || newBackSpeed > MAX_SPEED) {
-    ws.textAll("⚠️ Pitch Up Blocked: speed limit reached");
-    Serial.println("Pitch Up Blocked: limit reached");
-    return;  // Stop the whole function safely
-  }
-}
+   if( motorSpeeds[frontMotors[0]] != motorSpeeds[frontMotors[1]]||
+   motorSpeeds[backMotors[1]]!= motorSpeeds[backMotors[0]]){
+    motorSpeeds[frontMotors[0]] =motorSpeeds[frontMotors[1]];
+     motorSpeeds[backMotors[0]]= motorSpeeds[backMotors[1]];
+     updateMotor(motors[frontMotors[0]], motorSpeeds[frontMotors[1]]);
+    updateMotor(motors[backMotors[0]],  motorSpeeds[backMotors[1]]);
+ // speeds.add(motorSpeeds[frontMotors[i]]);
+  //speeds.add(motorSpeeds[backMotors[i]]);
+   Serial.printf("[%d] satbilised front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] satbilised back motors = %d\n", i, motorSpeeds[backMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+   }
+    if(motorSpeeds[frontMotors[i]]>=1000||motorSpeeds[backMotors[i]]>=1000){
+    Serial.println("Speeds cant exceed 2000");
+    return;
+   }
+   }
 
 // If safe, apply changes to both pairs
    for (int i = 0; i < 2; i++) {
   motorSpeeds[frontMotors[i]] += DELTA;
-  motorSpeeds[backMotors[i]]  -= DELTA;
+  motorSpeeds[backMotors[i]]  += DELTA+10;
   updateMotor(motors[frontMotors[i]], motorSpeeds[frontMotors[i]]);
   updateMotor(motors[backMotors[i]],  motorSpeeds[backMotors[i]]);
   speeds.add(motorSpeeds[frontMotors[i]]);
   speeds.add(motorSpeeds[backMotors[i]]);
+  Serial.printf("[%d] front motors = %d\n", i, motorSpeeds[frontMotors[i]]);
+ Serial.printf("[%d] back motors = %d\n", i, motorSpeeds[backMotors[i]]);
 }
-  ws.textAll(jsonString);
-    ws.textAll("Pitch Up - Nose lifting!");
-     Serial.println("Motor Speeds==" +jsonString);
-
-  } else if (command == "RollLeft") {  // Bank left: Lefts +, Rights -
-    Serial.println("Roll Left: Lefts +delta, Rights -delta");
-    motorSpeeds[0] += DELTA;  // FL
-    motorSpeeds[2] += DELTA;  // RL
-    motorSpeeds[1] -= DELTA;  // FR
-    motorSpeeds[3] -= DELTA;  // RR
-    for (int i = 0; i < 4; i++){
-      if (motorSpeeds[0] >= MAX_SPEED || motorSpeeds[1] >= MAX_SPEED ||
-        motorSpeeds[2] >= MAX_SPEED|| motorSpeeds[3] >= MAX_SPEED) {
-        ws.textAll("Cannot Roll Left: motor max limit reached");
-          return;
-        }
-     updateMotor(motors[i], motorSpeeds[i]);
-     speeds.add(motorSpeeds[i]);
-     }
-    serializeJson(json, jsonString);
-  ws.textAll(jsonString);
-   Serial.println("Motor Speeds==" +jsonString);
-    ws.textAll("Roll Left - Banking left!");
-  } else if (command == "RollRight") {  // Bank right: Rights +, Lefts -
-    Serial.println("Roll Right: Rights +delta, Lefts -delta");
-    motorSpeeds[0] -= DELTA;  // FL
-    motorSpeeds[2] -= DELTA;  // RL
-    motorSpeeds[1] += DELTA;  // FR
-    motorSpeeds[3] += DELTA;  // RR
-    for (int i = 0; i < 4; i++) {
-      if (motorSpeeds[0] <= MIN_SPEED || motorSpeeds[1] <= MIN_SPEED ||
-        motorSpeeds[2] <= MIN_SPEED || motorSpeeds[3] <= MIN_SPEED) {
-        ws.textAll("Cannot Roll Right: motor  limit reached");
-          return;
-        }
-      updateMotor(motors[i], motorSpeeds[i]);
-      speeds.add(motorSpeeds[i]);
-      }
       serializeJson(json, jsonString);
   ws.textAll(jsonString);
-    ws.textAll("Roll Right - Banking right!");
+    ws.textAll("Pitch DOwn - Nose Dipping!");
+     Serial.println("Motor Speeds==" +jsonString);
+   
+  } 
+  
+  //Rolling Left
+  else if (command == "RollLeft") {  // Bank left: Lefts +, Rights -
+     /*We need to make sure the speed of a pair of motors is 
+    //same before making changes so we dont have un balanced movements*/
+   for (int i = 0; i < 2; i++) {
+
+    if( motorSpeeds[leftMotors[0]] != motorSpeeds[leftMotors[1]]||
+   motorSpeeds[rightMotors[1]]!= motorSpeeds[rightMotors[0]]){
+
+    motorSpeeds[leftMotors[0]] =motorSpeeds[leftMotors[1]];
+     motorSpeeds[rightMotors[0]]= motorSpeeds[rightMotors[1]];
+     updateMotor(motors[leftMotors[0]], motorSpeeds[leftMotors[1]]);
+    updateMotor(motors[rightMotors[0]],  motorSpeeds[rightMotors[1]]);
+ // speeds.add(motorSpeeds[rightMotors[i]]);
+ // speeds.add(motorSpeeds[leftMotors[i]]);
+   Serial.printf("[%d] satbilised left motors = %d\n", i, motorSpeeds[leftMotors[i]]);
+ Serial.printf("[%d] satbilised back motors = %d\n", i, motorSpeeds[rightMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+   }
+   }
+   for (int i = 0; i < 2; i++) {
+    
+  motorSpeeds[leftMotors[i]] +=DELTA;
+  motorSpeeds[rightMotors[i]] +=DELTA+10;
+  updateMotor(motors[leftMotors[i]], motorSpeeds[leftMotors[i]]);
+  updateMotor(motors[rightMotors[i]] ,  motorSpeeds[rightMotors[i]] );
+  speeds.add(motorSpeeds[leftMotors[i]]);
+  speeds.add(motorSpeeds[rightMotors[i]]);
+   Serial.printf("[%d] left motors = %d\n", i, motorSpeeds[leftMotors[i]]);
+ Serial.printf("[%d] right motors = %d\n", i, motorSpeeds[rightMotors[i]]);
+}
+    
+
+    serializeJson(json, jsonString);
+    ws.textAll(jsonString);
+   Serial.println("Motor Speeds==" +jsonString);
+    ws.textAll("Roll Left - Banking left!");
+
+
+  } 
+  //Rolling Right
+  else if (command == "RollRight") {  // Bank right: Rights +, Lefts -
+  /*We need to make sure the speed of a pair of motors is 
+    //same before making changes so we dont have un balanced movements*/
+ for (int i = 0; i < 2; i++) {
+    if( motorSpeeds[leftMotors[0]] != motorSpeeds[leftMotors[1]]||
+   motorSpeeds[rightMotors[1]]!= motorSpeeds[rightMotors[0]]){
+    motorSpeeds[leftMotors[0]] =motorSpeeds[leftMotors[1]];
+     motorSpeeds[rightMotors[0]]= motorSpeeds[rightMotors[1]];
+     updateMotor(motors[leftMotors[0]], motorSpeeds[leftMotors[1]]);
+    updateMotor(motors[rightMotors[0]],  motorSpeeds[rightMotors[1]]);
+  //speeds.add(motorSpeeds[rightMotors[i]]);
+  //speeds.add(motorSpeeds[leftMotors[i]]);
+   Serial.printf("[%d] satbilised left motors = %d\n", i, motorSpeeds[leftMotors[i]]);
+ Serial.printf("[%d] satbilised right motors = %d\n", i, motorSpeeds[rightMotors[i]]);
+     Serial.println(" Motors were not eauqal hence stabilized");
+   }
+ }
+   for (int i = 0; i < 2; i++) {
+  motorSpeeds[leftMotors[i]] +=DELTA+10;
+  motorSpeeds[rightMotors[i]] +=DELTA;;
+  updateMotor(motors[leftMotors[i]], motorSpeeds[leftMotors[i]]);
+  updateMotor(motors[rightMotors[i]] ,  motorSpeeds[rightMotors[i]] );
+  speeds.add(motorSpeeds[leftMotors[i]]);
+  speeds.add(motorSpeeds[rightMotors[i]]);
+   Serial.printf("[%d] left motors = %d\n", i, motorSpeeds[leftMotors[i]]);
+ Serial.printf("[%d] right motors = %d\n", i, motorSpeeds[rightMotors[i]]);
+}
+      
+    serializeJson(json, jsonString);
+    ws.textAll(jsonString);
+   Serial.println("Motor Speeds==" +jsonString);
+    ws.textAll("Rolling Right - Banking Right!");
   } else if (command == "YawLeft") {  // CCW turn: Lefts +, Rights - (torque)
     Serial.println("Yaw Left: Lefts +delta, Rights -delta");
     motorSpeeds[0] += DELTA;  // FL +
